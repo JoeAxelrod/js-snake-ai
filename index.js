@@ -5,16 +5,17 @@ import fs from 'fs';
 
 let snake = [{ top: 3, left: 3 }]; // Snake starts in the middle of our 10x10 grid
 let apple = { top: 7, left: 7 }; // Apple starts at the bottom right
-let epsilon = 1//0.0001;
+let epsilon = 0.0001;
 let predictDirection;
-const delayStep = 200;
+const delayStep = 250;
+const learningRate = 0.0001;
 
 let games = 0;
-const printEveryNGames = 1;
+const printEveryNGames = 500;
 const gamma = 0.9;  // discount factor for future rewards
 let memory = [];  // stores {state, action, reward, nextState} tuples for training
 
-const stateLength = 6;
+const stateLength = 9;
 let previousSnakeHeadPosition = null; // Initialize this wherever the game starts
 let newDistanceToFood = null;
 let prevDistanceToFood = null;
@@ -35,10 +36,10 @@ if (fs.existsSync('my-model/model.json')) {
     model = tf.sequential();
 
     // Add first dense layer with 32 neurons and 'relu' activation function
-    model.add(tf.layers.dense({units: 32, activation: 'relu', inputShape: [stateLength]}));
+    model.add(tf.layers.dense({units: 512, activation: 'relu', inputShape: [stateLength]}));
 
     // Add another dense layer with 32 neurons and 'relu' activation function
-    model.add(tf.layers.dense({units: 32, activation: 'relu'}));
+    model.add(tf.layers.dense({units: 512, activation: 'relu'}));
 
     // Output is 4 for the possible directions the snake can move
     // Use a linear activation function for the output layer
@@ -46,21 +47,22 @@ if (fs.existsSync('my-model/model.json')) {
 
 }
 
-// Compile model with 'adam' optimizer instead of 'sgd'
-model.compile({optimizer: 'adam', loss: 'meanSquaredError'});
+
+const optimizer = tf.train.adam(learningRate);
+model.compile({optimizer: /*"adam"*/ optimizer, loss: 'meanSquaredError'});
 
 let steps = 0;
 let reward = 0;
 let time = 0;
 
 async function moveSnake() {
-    const oldState = getState();
+    const oldState = getState("predict");
 
     let oldStateTensor = await tf.tensor2d(oldState, [1, stateLength]);
 
     // Add randomness to encourage exploration
     let direction;
-    if (/*!modelIsLoaded &&*/ Math.random() < 0.3 - games * epsilon) {  // 30% of the time, move randomly
+    if (games % printEveryNGames !== 0 && Math.random() < 0.3 - games * epsilon) {  // 30% of the time, move randomly
         direction = Math.floor(Math.random() * 4); // randomly choose a direction
     } else { // 70% of the time, use the model's prediction
         direction = (await tf.argMax(await model.predict(oldStateTensor), 1).array())[0];
@@ -71,7 +73,20 @@ async function moveSnake() {
 
     await drawGame(snake);
 
+
+    const currentPos = [snake[0].top, snake[0].left];
+
+    let _direction;
+    // Calculate direction as the difference between the current and previous position
+    _direction = [
+        currentPos[0] - (previousSnakeHeadPosition?.[0] || 0),
+        currentPos[1] - (previousSnakeHeadPosition?.[1] || 0)
+    ];
+
+
     sumReward += reward;
+    console.log("games:", games);
+    console.log("direction: ", _direction);
     console.log(sumReward < 0 ? chalk.red("sumReward: " + sumReward) : chalk.green("sumReward: " + sumReward));
     console.log("predictDirection: " + predictDirection);
     console.log("Randomness: " + (0.3 - games * epsilon).toFixed(2));
@@ -91,7 +106,7 @@ async function moveSnake() {
 
     console.log('+----------+\n');
 
-    const newState = getState();
+    const newState = getState("fit");
 
     let newStateTensor = await tf.tensor2d(newState, [1, stateLength]);
 
@@ -167,29 +182,24 @@ async function performAction(direction) {
 }
 
 
-function getState() {
+function getState(mode) {
     const foodDir = getFoodDir();
 
     // Get the new danger direction after the action is performed
     const dangerDir = getDangerDir();
 
-    /*
-      const currentPos = [snake[0].top, snake[0].left];
+  const currentPos = [snake[0].top, snake[0].left];
 
-      let direction;
-       if (previousSnakeHeadPosition === null) {
-           // The game just started, so we don't have a direction yet
-           direction = [0, 0];
-       } else {
-           // Calculate direction as the difference between the current and previous position
-           direction = [
-               currentPos[0] - previousSnakeHeadPosition[0],
-               currentPos[1] - previousSnakeHeadPosition[1]
-           ];
-       }
-
+  let direction;
+   // Calculate direction as the difference between the current and previous position
+   direction = [
+       currentPos[0] - (previousSnakeHeadPosition?.[0] || 0),
+       currentPos[1] - (previousSnakeHeadPosition?.[1] || 0)
+   ];
+   if (mode === "predict") {
        previousSnakeHeadPosition = currentPos; // Update the previous position
-       */
+   }
+
 
     let avgTailPos = [0, 0];
     if(snake.length > 1) {
@@ -221,10 +231,12 @@ function getState() {
 
     // Get the new distance to food after the action is performed
 
-    // The new state of the game
-    const nextState = [/*...direction,*/ ...dangerDir, ...foodDir, /*getManhattanDistanceToFood(), ...avgTailPos*//*, ...midSegmentPos, ...quarterSegmentPos, ...threeQuartersSegmentPos, ...endSegmentPos*/];
 
-    return nextState; // Array(9) [0,1,0, 0,1,  -1, 6,9,3]
+
+    // The new state of the game
+    const nextState = [snake.length / (10 * 10 /* the board size */), ...direction, ...dangerDir, ...foodDir/*, getManhattanDistanceToFood(), ...avgTailPos, ...midSegmentPos, ...quarterSegmentPos, ...threeQuartersSegmentPos, ...endSegmentPos*/];
+
+    return nextState;
 }
 
 
@@ -391,7 +403,7 @@ async function newGame() {
     games++;
     steps = 0;
     sumReward = 0;
-    snake = [{ top: 3, left: 3 }]; // Snake starts in the middle of our 10x10 grid
+    snake = [{ top: 4, left: 4 }]; // Snake starts in the middle of our 10x10 grid
     apple = { top: 7, left: 7 }; // Apple starts at the bottom right
 }
 
