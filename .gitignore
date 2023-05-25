@@ -1,0 +1,6 @@
+snake-ai.iml
+venv
+.idea
+package-lock.json
+node_modules
+my-model

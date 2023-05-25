@@ -1,0 +1,16 @@
+{
+  "name": "samke-ai",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@tensorflow/tfjs-node": "^4.6.0",
+    "chalk": "^5.2.0"
+  },
+  "type": "module",
+  "description": ""
+}
