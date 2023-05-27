@@ -3,15 +3,25 @@ import chalk from 'chalk';
 import fs from 'fs';
 
 
+const dir2name = {
+    "1,0": "bottom",
+    "-1,0": "top",
+    "0,1": "right",
+    "0,-1": "left"
+}
+
+let steps = [];
+let apples = 0;
+let bestReward = 0;
 let snake = [{ top: 3, left: 3 }]; // Snake starts in the middle of our 10x10 grid
 let apple = { top: 7, left: 7 }; // Apple starts at the bottom right
 let epsilon = 0.0001;
 let predictDirection;
-const delayStep = 250;
+const delayStep = 200;
 const learningRate = 0.0001;
 
 let games = 0;
-const printEveryNGames = 500;
+const printEveryNGames = 100;
 const gamma = 0.9;  // discount factor for future rewards
 let memory = [];  // stores {state, action, reward, nextState} tuples for training
 
@@ -51,12 +61,13 @@ if (fs.existsSync('my-model/model.json')) {
 const optimizer = tf.train.adam(learningRate);
 model.compile({optimizer: /*"adam"*/ optimizer, loss: 'meanSquaredError'});
 
-let steps = 0;
+
+
 let reward = 0;
 let time = 0;
 
 async function moveSnake() {
-    const oldState = getState("predict");
+    const oldState = getState("predict", );
 
     let oldStateTensor = await tf.tensor2d(oldState, [1, stateLength]);
 
@@ -68,10 +79,11 @@ async function moveSnake() {
         direction = (await tf.argMax(await model.predict(oldStateTensor), 1).array())[0];
     }
 
+
     predictDirection = directions[direction];
+    steps.push(predictDirection);
     reward = await performAction(predictDirection);
 
-    await drawGame(snake);
 
 
     const currentPos = [snake[0].top, snake[0].left];
@@ -82,29 +94,6 @@ async function moveSnake() {
         currentPos[0] - (previousSnakeHeadPosition?.[0] || 0),
         currentPos[1] - (previousSnakeHeadPosition?.[1] || 0)
     ];
-
-
-    sumReward += reward;
-    console.log("games:", games);
-    console.log("direction: ", _direction);
-    console.log(sumReward < 0 ? chalk.red("sumReward: " + sumReward) : chalk.green("sumReward: " + sumReward));
-    console.log("predictDirection: " + predictDirection);
-    console.log("Randomness: " + (0.3 - games * epsilon).toFixed(2));
-    console.log(reward < 0 ? chalk.red("reward: " + reward) : chalk.green("reward: " + reward));
-    console.log("currDistanceToFood: " + newDistanceToFood);
-    console.log("prevDistanceToFood: " + prevDistanceToFood);
-
-    time = new Date().getTime();
-
-    if (games % printEveryNGames === 0) {
-        while (time > new Date().getTime() - delayStep) {
-            void 0;
-        }
-    }
-
-    prevDistanceToFood = newDistanceToFood;
-
-    console.log('+----------+\n');
 
     const newState = getState("fit");
 
@@ -119,16 +108,51 @@ async function moveSnake() {
 
     newQs[0][direction] = updatedReward;
 
-    await model.fit(oldStateTensor, await tf.tensor2d(newQs, [1, 4]), {epochs: 5});
+    const result = await model.fit(oldStateTensor, await tf.tensor2d(newQs, [1, 4]), {
+        epochs: 5,
+        verbose: 0
+    });
 
-    if (reward === -25) {
+    console.clear();
+    await drawGame(snake);
+
+    sumReward += reward;
+
+    console.log("games:", games);
+    console.log("direction: ", _direction, "(" + dir2name[_direction.toString()] + ")");
+    console.log(sumReward < 0 ? chalk.red("sumReward: " + sumReward) : chalk.green("sumReward: " + sumReward));
+    console.log("predictDirection: " + predictDirection);
+    console.log("Randomness: " + (0.3 - games * epsilon).toFixed(2));
+    console.log(reward < 0 ? chalk.red("reward: " + reward) : chalk.green("reward: " + reward));
+    console.log("currDistanceToFood: " + newDistanceToFood);
+    console.log("prevDistanceToFood: " + prevDistanceToFood);
+    console.log("bestReward: ", bestReward + "🍎");
+    console.log("steps: ", steps[steps.length - 1], steps[steps.length - 2], steps[steps.length - 3]);
+
+
+
+
+
+    prevDistanceToFood = newDistanceToFood;
+    console.log("epochs:", result.params.epochs);
+    console.log("loss:", result.history.loss.map(it => it.toFixed(3)));
+
+    time = new Date().getTime();
+    if (games % printEveryNGames === 0) {
+        while (time > new Date().getTime() - delayStep) {
+            void 0;
+        }
+    }
+    if (reward < -1) {
+        if (bestReward < apples) {
+            bestReward = apples;
+        }
         await newGame();
     }
     return predictDirection;
 }
 
 async function performAction(direction) {
-    steps++;
     const head = {...snake[0]}; // copy head
 
     switch (direction) {
@@ -146,25 +170,45 @@ async function performAction(direction) {
             break;
     }
 
+
+    if (snake.length > 1 && head.top === snake[1].top && head.left === snake[1].left) {
+        // reverse direction is not allowed
+        // direction: top, ai move: bottom
+        // snake: [ { top: 5, left: 5 }, { top: 4, left: 5 }]
+        // head:  { top: 4, left: 5 }
+        console.log(head)
+        console.log(snake)
+        console.log("steps: ", steps[steps.length - 2], steps[steps.length - 1]);
+        if (games % printEveryNGames === 0) {
+            void 0;
+        }
+        return -50;
+    }
+
     snake.unshift(head); // add new head to snake
 
 
-    newDistanceToFood = getManhattanDistanceToFood();
-
 
     // If the snake hits the boundary or itself, it's game over and the reward is -1
-    if (isDanger(head)) {
-        return -25;
+    if (isOutOfBounds(head)) {
+        return -10;
     }
+
+    if (isOnSnake(head)) {
+        return -5;
+    }
+
 
     // If the snake eats an apple, the reward is 1
     if (head.top === apple.top && head.left === apple.left) {
-        apple.top = Math.floor(Math.random() * 10);
-        apple.left = Math.floor(Math.random() * 10);
-        return 25;
+        apples++;
+        generateNewApplePosition();
+        return 15;
     }
 
     snake.pop(); // remove tail
+
+    newDistanceToFood = getManhattanDistanceToFood();
 
     // If the snake moves farther to the apple and has no tail, the reward is -1
     if (prevDistanceToFood && snake.length === 1) {
@@ -181,8 +225,10 @@ async function performAction(direction) {
     return 0;
 }
 
-
-function getState(mode) {
+function getState({
+                      mode = "predict",
+        lastMove = null
+                  }) {
     const foodDir = getFoodDir();
 
     // Get the new danger direction after the action is performed
@@ -192,6 +238,10 @@ function getState(mode) {
 
   let direction;
    // Calculate direction as the difference between the current and previous position
+   //  [1,  0]: bottom
+   //  [-1, 0]: top
+   //  [0,  1]: right
+   //  [0, -1]: left.
    direction = [
        currentPos[0] - (previousSnakeHeadPosition?.[0] || 0),
        currentPos[1] - (previousSnakeHeadPosition?.[1] || 0)
@@ -234,13 +284,24 @@ function getState(mode) {
 
 
     // The new state of the game
-    const nextState = [snake.length / (10 * 10 /* the board size */), ...direction, ...dangerDir, ...foodDir/*, getManhattanDistanceToFood(), ...avgTailPos, ...midSegmentPos, ...quarterSegmentPos, ...threeQuartersSegmentPos, ...endSegmentPos*/];
+    const nextState = [snake.length > 0 ? 1 : 0/*/ (10 * 10 /!* the board size *!/)*/, ...direction, ...dangerDir, ...foodDir/*, getManhattanDistanceToFood(), ...avgTailPos, ...midSegmentPos, ...quarterSegmentPos, ...threeQuartersSegmentPos, ...endSegmentPos*/];
 
     return nextState;
 }
 
 
+function generateNewApplePosition() {
+    apple.top = Math.floor(Math.random() * 10);
+    apple.left = Math.floor(Math.random() * 10);
 
+    // Check if apple position overlaps with the snake position
+    for(let i = 0; i < snake.length; i++) {
+        if(snake[i].top === apple.top && snake[i].left === apple.left) {
+            // If there's overlap, generate new apple position again
+            return generateNewApplePosition();
+        }
+    }
+}
 
 function sampleBatch(memory, batchSize) {
     const batch = [];
@@ -255,7 +316,7 @@ function sampleBatch(memory, batchSize) {
 
 function drawGame(snake) {
     if (games % printEveryNGames === 0) {
-        console.clear();
+        // console.clear();
 
         // print the top border
         console.log('+--------------------+');
@@ -365,8 +426,8 @@ function getFoodDir() {
         left: apple.left - snake[0].left
     };
 
-    console.log("x:", directionToFood.left < 0 ? "left" : directionToFood.left > 0 ? "right" : "vertical")
-    console.log("y:", directionToFood.top < 0 ? "above" : directionToFood.top > 0 ? "below" : "horizontal")
+    // console.log("x:", directionToFood.left < 0 ? "left" : directionToFood.left > 0 ? "right" : "vertical")
+    // console.log("y:", directionToFood.top < 0 ? "above" : directionToFood.top > 0 ? "below" : "horizontal")
     return [
         // For the x direction:
         // If the apple is to the left, return -1.
@@ -401,7 +462,8 @@ function getManhattanDistanceToFood() {
 
 async function newGame() {
     games++;
-    steps = 0;
+    apples = 0;
+    steps = [];
     sumReward = 0;
     snake = [{ top: 4, left: 4 }]; // Snake starts in the middle of our 10x10 grid
     apple = { top: 7, left: 7 }; // Apple starts at the bottom right
