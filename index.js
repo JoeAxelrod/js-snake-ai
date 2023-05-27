@@ -67,7 +67,9 @@ let reward = 0;
 let time = 0;
 
 async function moveSnake() {
-    const oldState = getState("predict", );
+    const oldState = getState({
+        mode: "predict"
+    });
 
     let oldStateTensor = await tf.tensor2d(oldState, [1, stateLength]);
 
@@ -95,7 +97,9 @@ async function moveSnake() {
         currentPos[1] - (previousSnakeHeadPosition?.[1] || 0)
     ];
 
-    const newState = getState("fit");
+    const newState = getState({
+        mode: "fit"
+    });
 
     let newStateTensor = await tf.tensor2d(newState, [1, stateLength]);
 
@@ -226,9 +230,9 @@ async function performAction(direction) {
 }
 
 function getState({
-                      mode = "predict",
+        mode = "predict",
         lastMove = null
-                  }) {
+    }) {
     const foodDir = getFoodDir();
 
     // Get the new danger direction after the action is performed
