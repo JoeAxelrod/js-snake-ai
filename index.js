@@ -10,6 +10,9 @@ const dir2name = {
     "0,-1": "left"
 }
 
+const maxMemorySize = 50000; // arbitrary large number
+let memory = []; // array to hold experiences
+
 let steps = [];
 let apples = 0;
 let bestReward = 0;
@@ -23,9 +26,8 @@ const learningRate = 0.0001;
 let games = 0;
 const printEveryNGames = 100;
 const gamma = 0.9;  // discount factor for future rewards
-let memory = [];  // stores {state, action, reward, nextState} tuples for training
 
-const stateLength = 9;
+const stateLength = 10;
 let previousSnakeHeadPosition = null; // Initialize this wherever the game starts
 let newDistanceToFood = null;
 let prevDistanceToFood = null;
@@ -45,11 +47,9 @@ if (fs.existsSync('my-model/model.json')) {
 } else {
     model = tf.sequential();
 
-    // Add first dense layer with 32 neurons and 'relu' activation function
-    model.add(tf.layers.dense({units: 512, activation: 'relu', inputShape: [stateLength]}));
+    model.add(tf.layers.dense({units: 256, activation: 'relu', inputShape: [stateLength]}));
 
-    // Add another dense layer with 32 neurons and 'relu' activation function
-    model.add(tf.layers.dense({units: 512, activation: 'relu'}));
+    model.add(tf.layers.dense({units: 256, activation: 'relu'}));
 
     // Output is 4 for the possible directions the snake can move
     // Use a linear activation function for the output layer
@@ -68,7 +68,8 @@ let time = 0;
 
 async function moveSnake() {
     const oldState = getState({
-        mode: "predict"
+        mode: "predict",
+        lastMove: steps[steps.length - 1],
     });
 
     let oldStateTensor = await tf.tensor2d(oldState, [1, stateLength]);
@@ -98,7 +99,8 @@ async function moveSnake() {
     ];
 
     const newState = getState({
-        mode: "fit"
+        mode: "fit",
+        lastMove: steps[steps.length - 1]
     });
 
     let newStateTensor = await tf.tensor2d(newState, [1, stateLength]);
@@ -113,6 +115,53 @@ async function moveSnake() {
     newQs[0][direction] = updatedReward;
 
     const result = await model.fit(oldStateTensor, await tf.tensor2d(newQs, [1, 4]), {
+        epochs: 5,
+        verbose: 0
+    });
+
+
+    let experience = {
+        oldState: oldState,
+        action: direction,
+        reward: reward,
+        newState: newState
+    };
+
+    if (memory.length >= maxMemorySize) {
+        memory.shift(); // remove the oldest experience if the memory is at capacity
+    }
+    memory.push(experience); // add the new experience to the memory
+
+
+
+    let batchSize = 32; // smaller batch size might lead to more stable learning
+
+    let batch = sampleBatch(memory, batchSize); // get a batch of random experiences
+
+    let inputs = [];
+    let targets = [];
+
+
+
+    for (let i = 0; i < batchSize; i++) {
+        let oldStateTensor = await tf.tensor2d(batch[i].oldState, [1, stateLength]);
+        let newStateTensor = await tf.tensor2d(batch[i].newState, [1, stateLength]);
+
+        let oldQs = await model.predict(oldStateTensor).array();
+        let newQs = await model.predict(newStateTensor).array();
+        let updatedReward = batch[i].reward + gamma * Math.max(...newQs[0]);
+
+        oldQs[0][batch[i].action] = updatedReward;
+
+        inputs.push(batch[i].oldState);
+        targets.push(oldQs[0]);
+    }
+
+// Convert to tensors
+    inputs = tf.tensor2d(inputs, [batchSize, stateLength]);
+    targets = tf.tensor2d(targets, [batchSize, 4]);
+
+    await model.fit(inputs, targets, {
         epochs: 5,
         verbose: 0
     });
@@ -180,13 +229,11 @@ async function performAction(direction) {
         // direction: top, ai move: bottom
         // snake: [ { top: 5, left: 5 }, { top: 4, left: 5 }]
         // head:  { top: 4, left: 5 }
-        console.log(head)
-        console.log(snake)
-        console.log("steps: ", steps[steps.length - 2], steps[steps.length - 1]);
+
         if (games % printEveryNGames === 0) {
             void 0;
         }
-        return -50;
+        return -25;
     }
 
     snake.unshift(head); // add new head to snake
@@ -285,10 +332,8 @@ function getState({
 
     // Get the new distance to food after the action is performed
 
-
-
     // The new state of the game
-    const nextState = [snake.length > 0 ? 1 : 0/*/ (10 * 10 /!* the board size *!/)*/, ...direction, ...dangerDir, ...foodDir/*, getManhattanDistanceToFood(), ...avgTailPos, ...midSegmentPos, ...quarterSegmentPos, ...threeQuartersSegmentPos, ...endSegmentPos*/];
+    const nextState = [directions.findIndex(it => it === lastMove), snake.length > 0 ? 1 : 0/*/ (10 * 10 /!* the board size *!/)*/, ...direction, ...dangerDir, ...foodDir/*, ...currentPos, getManhattanDistanceToFood(), ...avgTailPos*//*,  ...midSegmentPos, ...quarterSegmentPos, ...threeQuartersSegmentPos, ...endSegmentPos*/];
 
     return nextState;
 }
@@ -317,6 +362,7 @@ function sampleBatch(memory, batchSize) {
 
     return batch;
 }
+
 
 function drawGame(snake) {
     if (games % printEveryNGames === 0) {
